@@ -4,8 +4,8 @@ from recommenders.KNNRecommender import KNNRecommender
 from recommenders.RNNRecommender import RNNRecommender
 
 from util import evaluation
-from util.make_data import * 
-from util.metrics import mrr,recall
+from util.make_data import *
+from util.metrics import mrr, recall
 import os
 import argparse
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -29,22 +29,23 @@ if __name__ == "__main__":
     parser.add_argument('--neg_samples', type=int, default=3)
     parser.add_argument('--sets_of_neg_samples', type=int, default=50)
     config = parser.parse_args()
-    METRICS = {'mrr': mrr}
+    METRICS = {'recall': recall}
     sequences, test_sequences = make_data_toy_data()
+    test_sequences = test_sequences.loc[test_sequences['sequence'].map(
+            len) > abs(1), 'sequence'].values
     item_count = item_count(sequences, 'sequence')
 
+    rec_sknn2 = KNNRecommender(model='sknn', k=10)
     rec_sknn = KNNRecommender(model='sknn', k=12)
     rec_gru4rec = RNNRecommender(session_layers=[
                                  20], batch_size=16, learning_rate=0.1, momentum=0.1, dropout=0.1, epochs=5)
-    rec_ensemble = [rec_sknn, rec_gru4rec]
+    rec_ensemble = [rec_sknn, rec_sknn2]
     for rec in rec_ensemble:
         rec.fit(sequences)
 
     ensemble = Rec4RecRecommender(
         item_count, 100, rec_ensemble, config, pretrained_embeddings=None)
-    ensemble.fit(test_sequences,METRICS)
+    ensemble.fit(test_sequences, METRICS)
 
     ensemble_eval_score = evaluation.sequential_evaluation(
         ensemble, test_sequences=test_sequences, evaluation_functions=METRICS.values(), top_n=10, scroll=False)
-
-    

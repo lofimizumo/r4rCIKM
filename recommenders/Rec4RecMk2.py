@@ -7,7 +7,6 @@ from time import time
 from util import evaluation
 from random import randint
 
-
 class Rec4RecRecommender(ISeqRecommender):
 
     def __init__(self, num_items, dims, rec_ensemble, model_args, pretrained_embeddings=None):
@@ -29,26 +28,28 @@ class Rec4RecRecommender(ISeqRecommender):
             'cuda:0' if torch.cuda.is_available() else 'cpu')
 
     def fit(self, sequences, metrics):
-        # generate labels
+        sequences = sequences.loc[sequences['sequence'].map(len) > abs(1), 'sequence'].values
         rec_eval_scores = evaluation.predict_score_of_sequences(self.ensemble,
-                                                                test_sequences=sequences,
-                                                                given_k=1,
-                                                                look_ahead=1,
-                                                                evaluation_functions=metrics.values(),
-                                                                top_n=10,
-                                                                scroll=False
-                                                                )
-
+                                                            test_sequences=sequences,
+                                                            given_k=1,
+                                                            look_ahead=1,
+                                                            evaluation_functions=metrics.values(),
+                                                            top_n=10,
+                                                            scroll=False  
+                                                            )
+        # build support set for each base recommender here
+        
         np_sub_scores = np.array(rec_eval_scores)
         sub_scores = np_sub_scores.sum(0)/np_sub_scores.shape[0]
         print(sub_scores)
         seq, labels_and_negs = self.label(sequences, rec_eval_scores, 5)
         lst = list(seq)
         lst = [list(map(int, i)) for i in lst]
-        # build support set for each base recommender here
-        self.model.generateBaseEmbeddings(lst, labels_and_negs)
-
-        sequences_np = np.asarray(lst)
+        sequences = np.asarray(lst)
+        
+        
+        sequences_np = sequences
+        targets_np = labels_and_negs
         num_items = self.num_items
         n_train = len(sequences_np)
         self.logger.info("Total training records:{}".format(n_train))
@@ -75,7 +76,7 @@ class Rec4RecRecommender(ISeqRecommender):
                 batch_record_index = record_indexes[start:end]
 
                 batch_sequences = sequences_np[batch_record_index]
-                batch_targets = labels_and_negs[batch_record_index]
+                batch_targets = targets_np[batch_record_index]
 
                 prediction_score = self.model(
                     batch_sequences, batch_targets)
@@ -99,7 +100,7 @@ class Rec4RecRecommender(ISeqRecommender):
             output_str = "Epoch %d [%.1f s]  loss=%.4f" % (
                 epoch_num + 1, t2 - t1, epoch_loss)
             self.logger.info(output_str)
-
+    
     def label(self, train_data, rec_eval_scores, sequence_length):
         """
         generate one label and one negative sample:
@@ -129,7 +130,8 @@ class Rec4RecRecommender(ISeqRecommender):
                 0, len(positive_index)-1)], negative_index[randint(0, len(negative_index)-1)]))
         ret = np.delete(train_data, rows_to_discard, axis=0)
         labels_and_negs = np.asarray(labels_and_negs)
-        return ret, labels_and_negs
+        return ret, labels_and_negs 
+
 
     def recommend(self, item_seq, user_id=None):
 
@@ -163,7 +165,7 @@ class MF(nn.Module):
         self.rec_emb.weight.data.normal_(
             0, 1.0 / self.rec_emb.embedding_dim)
         # Todo: use embedding learnt from support set instead random initialized value here
-
+        
         self.rec_b = nn.Embedding(
             num_items, 1, padding_idx=0).to(self.device)
         self.rec_b.weight.data.zero_()
@@ -186,32 +188,6 @@ class MF(nn.Module):
 
         # self.item_emb.weight.requires_grad = False
 
-    def generateBaseEmbeddings(self, sequences, scores):
-        """
-        input:
-        ----------------
-        scores:[[1,0,0,1],[0,0,0,1]]
-        rec0:[1,0,0,1]
-        rec1:[0,0,0,1]
-        ----------------
-        return: {'rec_k': top_performed_sequences}
-        """
-        ind_best_performed = np.flip(np.argsort(
-            scores, axis=0), axis=0).T.tolist()
-        top_seqs = []
-        for i, indices_rec_k in enumerate(ind_best_performed):
-            rec_k_topK = [sequences[index] for index in indices_rec_k]
-            top_seqs.append(rec_k_topK)
-        for k, rec_k_top_seqs in enumerate(top_seqs):
-            embs = []
-            for j in rec_k_top_seqs:
-                seq_emb = self.item_emb(torch.LongTensor(j)).sum(0)
-                embs.append(seq_emb)
-            seq_embedding = torch.stack(embs).sum(0)
-
-            self.rec_emb.weight.data[k] = torch.nn.Parameter(
-                seq_embedding.to(torch.float))
-
     def forward(self, item_seq, rec_to_estimate):
         item_seq = item_seq
         sequence_embs = []
@@ -231,3 +207,6 @@ class MF(nn.Module):
         b = self.rec_b(rec_to_estimate)
         res = torch.baddbmm(b, rec_embs, sequence_embs.unsqueeze(2)).squeeze()
         return res
+
+
+
