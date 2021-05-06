@@ -47,7 +47,7 @@ class Rec4RecRecommender(ISeqRecommender):
         lst = [list(map(int, i)) for i in lst]
         # build support set for each base recommender here
         self.model.generateBaseEmbeddings(lst, labels_and_negs)
-
+        
         sequences_np = np.asarray(lst)
         num_items = self.num_items
         n_train = len(sequences_np)
