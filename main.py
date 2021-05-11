@@ -1,8 +1,9 @@
+from recommenders.AttentionRecommender import AttentionRecommender
 import numpy as np
 from recommenders.Rec4RecRecommender import Rec4RecRecommender
 from recommenders.KNNRecommender import KNNRecommender
 from recommenders.RNNRecommender import RNNRecommender
-
+from util.attention.utils import pandas_data_to_SASRec, data_partition
 from util import evaluation
 from util.make_data import *
 from util.metrics import mrr, recall
@@ -29,23 +30,32 @@ if __name__ == "__main__":
     parser.add_argument('--neg_samples', type=int, default=3)
     parser.add_argument('--sets_of_neg_samples', type=int, default=50)
     config = parser.parse_args()
-    METRICS = {'recall': recall}
+    METRICS = {'mrr': mrr}
     sequences, test_sequences = make_data_toy_data()
     test_sequences = test_sequences.loc[test_sequences['sequence'].map(
-            len) > abs(1), 'sequence'].values
+        len) > abs(1), 'sequence'].values
     item_count = item_count(sequences, 'sequence')
 
+    data_sasrecformat = pandas_data_to_SASRec(sequences, 'sequence', 'user_id')
+    train_data_sasrec = data_partition(data_sasrecformat)
+    a=train_data_sasrec[0]
+
+    rec_sasrec = AttentionRecommender()
+    rec_sasrec.fit(train_data_sasrec)
     rec_sknn2 = KNNRecommender(model='sknn', k=10)
     rec_sknn = KNNRecommender(model='sknn', k=12)
     rec_gru4rec = RNNRecommender(session_layers=[
-                                 20], batch_size=16, learning_rate=0.1, momentum=0.1, dropout=0.1, epochs=5)
+                                 10], batch_size=16, learning_rate=0.1, momentum=0.1, dropout=0.1, epochs=5)
     rec_ensemble = [rec_sknn, rec_sknn2]
     for rec in rec_ensemble:
         rec.fit(sequences)
+    eval_score = evaluation.sequential_evaluation(
+        rec_sknn, test_sequences, METRICS.values(), None, 1, 1, 10, scroll=False)
+    print(eval_score)
 
-    ensemble = Rec4RecRecommender(
-        item_count, 100, rec_ensemble, config, pretrained_embeddings=None)
-    ensemble.fit(test_sequences, METRICS)
+    # ensemble = Rec4RecRecommender(
+    #     item_count, 100, rec_ensemble, config, pretrained_embeddings=None)
+    # ensemble.fit(test_sequences, METRICS)
 
-    ensemble_eval_score = evaluation.sequential_evaluation(
-        ensemble, test_sequences=test_sequences, evaluation_functions=METRICS.values(), top_n=10, scroll=False)
+    # ensemble_eval_score = evaluation.sequential_evaluation(
+    #     ensemble, test_sequences=test_sequences, evaluation_functions=METRICS.values(), top_n=10, scroll=False)

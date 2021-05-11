@@ -42,7 +42,7 @@ class KNNRecommender(ISeqRecommender):
             - sf-sknn: SeqFilterSessionKNN(k, sample_size=1000, sampling='recent', similarity='jaccard', remind=False, pop_boost=0,
                  extend=False, normalize=True)
         """
-        super(KNNRecommender).__init__()
+        super().__init__()
         if model not in self.knn_models:
             raise ValueError("Unknown KNN model '{}'. The available ones are: {}".format(
                 model, list(self.knn_models.keys())

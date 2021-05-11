@@ -17,8 +17,9 @@ class ISeqRecommender(object):
         """
         Given the user profile return a list of recommendation
         :param user_profile: the user profile as a list of item identifiers
+        :e.g. ['1932','233','343','378']
         :param user_id: (optional) the user id
-        :return: list of recommendations e.g. [([2], 0.875), ([6], 1.0)]
+        :return: list of recommendations e.g. [(['1932'], 0.875), (['226'], 1.0)]
         """
         pass
 
