@@ -80,15 +80,15 @@ def predict_score_of_sequences(recommenders,
                 user = users[i]
             else:
                 user = None
-            rec_fitness=[]
+            rec_fitness = []
             for rec in recommenders:
                 score = evaluate_sequence(rec,
-                                        test_seq,
-                                        evaluation_functions,
-                                        user,
-                                        given_k,
-                                        look_ahead,
-                                        top_n)
+                                          test_seq,
+                                          evaluation_functions,
+                                          user,
+                                          given_k,
+                                          look_ahead,
+                                          top_n)
                 rec_fitness.append(score[0])
             ret.append(rec_fitness)
             pbar.update(1)
@@ -116,7 +116,7 @@ def evaluate_sequence(recommender, seq, evaluation_functions, user, ground_truth
         # if any of the two missing all evaluation functions are 0
         return np.zeros(len(evaluation_functions))
 
-    r = recommender.recommend(user_profile, user)[:top_n]
+    r = recommender.recommend(user_profile, user, ground_truth)[:top_n]
 
     if not r:
         # no recommendation found

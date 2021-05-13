@@ -84,7 +84,7 @@ def pandas_data_to_SASRec(data,sequence_col,user_col):
     #convert str to int
     items=[int(x) for x in items]
     users=[int(x) for x in users]
-    csv_like=zip(items,users)
+    csv_like=zip(users, items)
     return csv_like
 
 

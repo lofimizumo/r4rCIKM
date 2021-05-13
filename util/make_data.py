@@ -8,6 +8,7 @@ from random import randint
 import pathlib
 sys.path.append(os.getcwd())
 
+
 def make_data_toy_data():
     """
     return: train_data, test_data
@@ -20,6 +21,15 @@ def make_data_toy_data():
     dataset.sequence.map(cnt.update)
     train_data, test_data = last_session_out_split(dataset)
     return train_data, test_data
+
+
+def unique_item_count(sequences, sequence_column_name):
+    """
+    input:Dataframe sequences
+    """
+    df = sequences.explode(sequence_column_name)
+    unique_items = df[sequence_column_name].unique()
+    return unique_items
 
 
 def item_count(sequences, sequence_column_name):

@@ -16,17 +16,19 @@ def str2bool(s):
 class AttentionRecommender(ISeqRecommender):
     def __init__(self):
         super().__init__()
+        self.model = None
+        self.itemnum = None
 
     def fit(self, train_data):
         parser = argparse.ArgumentParser()
         parser.add_argument('--dataset', default=None)
         parser.add_argument('--train_dir', default=None)
-        parser.add_argument('--batch_size', default=128, type=int)
-        parser.add_argument('--lr', default=0.01, type=float)
-        parser.add_argument('--maxlen', default=50, type=int)
+        parser.add_argument('--batch_size', default=256, type=int)
+        parser.add_argument('--lr', default=.5e-2, type=float)
+        parser.add_argument('--maxlen', default=200, type=int)
         parser.add_argument('--hidden_units', default=50, type=int)
         parser.add_argument('--num_blocks', default=2, type=int)
-        parser.add_argument('--num_epochs', default=10, type=int)
+        parser.add_argument('--num_epochs', default=5, type=int)
         parser.add_argument('--num_heads', default=1, type=int)
         parser.add_argument('--dropout_rate', default=0.5, type=float)
         parser.add_argument('--l2_emb', default=0.0, type=float)
@@ -34,7 +36,8 @@ class AttentionRecommender(ISeqRecommender):
         parser.add_argument('--inference_only', default=False, type=str2bool)
         parser.add_argument('--state_dict_path', default=None, type=str)
         args = parser.parse_args()
-        [user_train, user_valid, user_test, usernum, itemnum] = train_data
+        [user_train, user_valid, user_test, usernum, self.itemnum] = train_data
+        self.unique_items(user_train)
         # tail? + ((len(user_train) % args.batch_size) != 0)
         num_batch = len(user_train) // args.batch_size
         cc = 0.0
@@ -42,12 +45,12 @@ class AttentionRecommender(ISeqRecommender):
             cc += len(user_train[u])
         print('average sequence length: %.2f' % (cc / len(user_train)))
 
-        sampler = WarpSampler(user_train, usernum, itemnum,
+        sampler = WarpSampler(user_train, usernum, self.itemnum,
                               batch_size=args.batch_size, maxlen=args.maxlen, n_workers=3)
         # no ReLU activation in original SASRec implementation?
-        model = SASRec(usernum, itemnum, args).to(args.device)
+        self.model = SASRec(usernum, self.itemnum, args).to(args.device)
 
-        for name, param in model.named_parameters():
+        for name, param in self.model.named_parameters():
             try:
                 torch.nn.init.xavier_uniform_(param.data)
             except:
@@ -56,12 +59,12 @@ class AttentionRecommender(ISeqRecommender):
         # this fails embedding init 'Embedding' object has no attribute 'dim'
         # model.apply(torch.nn.init.xavier_uniform_)
 
-        model.train()  # enable model training
+        self.model.train()  # enable model training
 
         epoch_start_idx = 1
         if args.state_dict_path is not None:
             try:
-                model.load_state_dict(torch.load(
+                self.model.load_state_dict(torch.load(
                     args.state_dict_path, map_location=torch.device(args.device)))
                 tail = args.state_dict_path[args.state_dict_path.find(
                     'epoch=') + 6:]
@@ -78,7 +81,7 @@ class AttentionRecommender(ISeqRecommender):
         # https://github.com/NVIDIA/pix2pixHD/issues/9 how could an old bug appear again...
         bce_criterion = torch.nn.BCEWithLogitsLoss()  # torch.nn.BCELoss()
         adam_optimizer = torch.optim.Adam(
-            model.parameters(), lr=args.lr, betas=(0.9, 0.98))
+            self.model.parameters(), lr=args.lr, betas=(0.9, 0.98))
 
         T = 0.0
         t0 = time.time()
@@ -93,7 +96,7 @@ class AttentionRecommender(ISeqRecommender):
                     u, seq, pos, neg = sampler.next_batch()  # tuples to ndarray
                     u, seq, pos, neg = np.array(u), np.array(
                         seq), np.array(pos), np.array(neg)
-                    pos_logits, neg_logits = model(u, seq, pos, neg)
+                    pos_logits, neg_logits = self.model(u, seq, pos, neg)
                     pos_labels, neg_labels = torch.ones(pos_logits.shape, device=args.device), torch.zeros(
                         neg_logits.shape, device=args.device)
                     # print("\neye ball check raw_logits:"); print(pos_logits); print(neg_logits) # check pos_logits > 0, neg_logits < 0
@@ -103,20 +106,44 @@ class AttentionRecommender(ISeqRecommender):
                         pos_logits[indices], pos_labels[indices])
                     loss += bce_criterion(neg_logits[indices],
                                           neg_labels[indices])
-                    for param in model.item_emb.parameters():
+                    for param in self.model.item_emb.parameters():
                         loss += args.l2_emb * torch.norm(param)
                     loss.backward()
                     adam_optimizer.step()
                     # expected 0.4~0.6 after init few epochs
-                    # print("loss in epoch {} iteration {}: {}".format(
-                    # epoch, step, loss.item()))
+                    print("loss in epoch {} iteration {}: {}".format(
+                        epoch, step, loss.item()))
                 pbar.update(1)
         sampler.close()
         print("Done")
         return super().fit(train_data)
 
-    def recommend(self, user_profile, user_id):
-        return super().recommend(user_profile, user_id=user_id)
+    def unique_items(self, user_train):
+        unique_items = []
+        for i in user_train.values():
+            unique_items += i
+        unique_items = list(set(unique_items))
+        self.unique_items = unique_items
+
+    def recommend(self, sequence, user_id=None, target=None):
+        # convert input to sasrec format
+        sequence = np.reshape([int(x) for x in sequence], (1, -1))
+        if target is not None:
+            target = [int(target[0][0])]
+            neg = random.choices(np.arange(self.itemnum),
+                                 k=400)
+            # neg = list(set(self.unique_items)-set(target))
+            items_to_predict = np.asarray(target+neg)
+        else:
+            items_to_predict = np.asarray(self.unique_items)
+        ret = self.model.predict(sequence, items_to_predict).squeeze(0)
+        # convert sasrec return to ISeqRecommender return style
+        # e.g. (['1943'],0.24)
+        idxs = ret.argsort().flip(0)
+        score = ret.take(idxs)
+        ret = [([str(items_to_predict[x[0]])], float(x[1]))
+               for x in zip(idxs, score)]
+        return ret
 
 
 class PointWiseFeedForward(torch.nn.Module):
@@ -233,7 +260,7 @@ class SASRec(torch.nn.Module):
 
         return pos_logits, neg_logits  # pos_pred, neg_pred
 
-    def predict(self, user_ids, log_seqs, item_indices):  # for inference
+    def predict(self, log_seqs, item_indices, user_ids=None):  # for inference
         log_feats = self.log2feats(log_seqs)  # user_ids hasn't been used yet
 
         # only use last QKV classifier, a waste
