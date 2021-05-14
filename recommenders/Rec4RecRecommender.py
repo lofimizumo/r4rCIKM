@@ -38,7 +38,6 @@ class Rec4RecRecommender(ISeqRecommender):
                                                                 top_n=10,
                                                                 scroll=False
                                                                 )
-
         np_sub_scores = np.array(rec_eval_scores)
         sub_scores = np_sub_scores.sum(0)/np_sub_scores.shape[0]
         print(sub_scores)
@@ -47,7 +46,7 @@ class Rec4RecRecommender(ISeqRecommender):
         lst = [list(map(int, i)) for i in lst]
         # build support set for each base recommender here
         self.model.generateBaseEmbeddings(lst, labels_and_negs)
-        
+
         sequences_np = np.asarray(lst)
         num_items = self.num_items
         n_train = len(sequences_np)
@@ -131,7 +130,7 @@ class Rec4RecRecommender(ISeqRecommender):
         labels_and_negs = np.asarray(labels_and_negs)
         return ret, labels_and_negs
 
-    def recommend(self, item_seq, user_id=None):
+    def recommend(self, item_seq, user_id=None, ground_truth=None):
 
         sequence = [int(x) for x in item_seq]
         sequence = torch.LongTensor(sequence).to(self.device)

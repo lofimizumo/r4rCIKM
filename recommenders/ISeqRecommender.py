@@ -13,7 +13,7 @@ class ISeqRecommender(object):
     def fit(self, train_data):
         pass
 
-    def recommend(self, user_profile, user_id=None):
+    def recommend(self, user_profile, user_id=None,ground_truth=None):
         """
         Given the user profile return a list of recommendation
         :param user_profile: the user profile as a list of item identifiers

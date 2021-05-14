@@ -90,7 +90,8 @@ class RNNRecommender(ISeqRecommender):
                                  time_key='ts')
         else:
             if self.user_layers is None:
-                raise ValueError('You should set the value of user_layers before training the personalized model.')
+                raise ValueError(
+                    'You should set the value of user_layers before training the personalized model.')
 
             if len(self.dropout) != 3:
                 raise ValueError('dropout should be a 3 tuple with '
@@ -113,7 +114,7 @@ class RNNRecommender(ISeqRecommender):
         self.model.fit(train_data)
         self.logger.info('Training completed')
 
-    def recommend(self, user_profile, user_id=None):
+    def recommend(self, user_profile, user_id=None, ground_truth=None):
         if not self.personalized:
             for item in user_profile:
                 pred = self.model.predict_next_batch(np.array([self.pseudo_session_id]),

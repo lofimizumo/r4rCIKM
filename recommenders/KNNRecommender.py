@@ -67,7 +67,7 @@ class KNNRecommender(ISeqRecommender):
         self.logger.info('Training completed')
         self.pseudo_session_id = 0
 
-    def recommend(self, user_profile, user_id=None):
+    def recommend(self, user_profile, user_id=None, ground_truth=None):
         for item in user_profile:
             pred = self.model.predict_next(session_id=self.pseudo_session_id,
                                            input_item_id=item)
@@ -77,6 +77,7 @@ class KNNRecommender(ISeqRecommender):
         self.pseudo_session_id += 1
         # convert to the required output format
         return [([x.index], x._2) for x in pred.reset_index().itertuples()]
+
 
 if __name__ == "__main__":
     print(sys.path)
