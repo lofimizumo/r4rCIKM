@@ -2,14 +2,17 @@ from _operator import itemgetter
 from math import sqrt
 import random
 import time
+from math import log10
+from datetime import datetime as dt
+from datetime import timedelta as td
 
 import numpy as np
 import pandas as pd
 
 
-class SessionKNN:
+class VMSessionKNN:
     '''
-    SessionKNN( k, sample_size=500, sampling='recent',  similarity = 'jaccard', remind=False, pop_boost=0, session_key = 'SessionId', item_key= 'ItemId')
+    VMSessionKNN( k, sample_size=1000, sampling='recent', similarity='cosine', weighting='div', dwelling_time=False, last_n_days=None, last_n_clicks=None, extend=False, weighting_score='div_score', weighting_time=False, normalize=True, session_key = 'SessionId', item_key= 'ItemId', time_key= 'Time')
 
     Parameters
     -----------
@@ -21,14 +24,22 @@ class SessionKNN:
         String to define the sampling method for sessions (recent, random). (default: recent)
     similarity : string
         String to define the method for the similarity calculation (jaccard, cosine, binary, tanimoto). (default: jaccard)
-    remind : bool
-        Should the last items of the current session be boosted to the top as reminders
-    pop_boost : int
-        Push popular items in the neighbor sessions by this factor. (default: 0 to leave out)
+    weighting : string
+        Decay function to determine the importance/weight of individual actions in the current session (linear, same, div, log, quadratic). (default: div)
+    weighting_score : string
+        Decay function to lower the score of candidate items from a neighboring sessions that were selected by less recently clicked items in the current session. (linear, same, div, log, quadratic). (default: div_score)
+    weighting_time : boolean
+        Experimental function to give less weight to items from older sessions (default: False)
+    dwelling_time : boolean
+        Experimental function to use the dwelling time for item view actions as a weight in the similarity calculation. (default: False)
+    last_n_days : int
+        Use only data from the last N days. (default: None)
+    last_n_clicks : int
+        Use only the last N clicks of the current session when recommending. (default: None)
     extend : bool
-        Add evaluated sessions to the maps
+        Add evaluated sessions to the maps.
     normalize : bool
-        Normalize the scores in the end
+        Normalize the scores in the end.
     session_key : string
         Header of the session ID column in the input file. (default: 'SessionId')
     item_key : string
@@ -37,20 +48,25 @@ class SessionKNN:
         Header of the timestamp column in the input file. (default: 'Time')
     '''
 
-    def __init__(self, k, sample_size=1000, sampling='recent', similarity='jaccard', remind=False, pop_boost=0,
-                 extend=False, normalize=True, session_key='SessionId', item_key='ItemId', time_key='Time'):
+    def __init__(self, k, sample_size=1000, sampling='recent', similarity='cosine', weighting='div',
+                 dwelling_time=False, last_n_days=None, last_n_clicks=None, extend=False, weighting_score='div_score',
+                 weighting_time=False, normalize=True, session_key='SessionId', item_key='ItemId', time_key='Time'):
 
-        self.remind = remind
         self.k = k
         self.sample_size = sample_size
         self.sampling = sampling
+        self.weighting = weighting
+        self.dwelling_time = dwelling_time
+        self.weighting_score = weighting_score
+        self.weighting_time = weighting_time
         self.similarity = similarity
-        self.pop_boost = pop_boost
         self.session_key = session_key
         self.item_key = item_key
         self.time_key = time_key
         self.extend = extend
         self.normalize = normalize
+        self.last_n_days = last_n_days
+        self.last_n_clicks = last_n_clicks
 
         # updated while recommending
         self.session = -1
@@ -61,10 +77,11 @@ class SessionKNN:
         self.session_item_map = dict()
         self.item_session_map = dict()
         self.session_time = dict()
+        self.min_time = -1
 
         self.sim_time = 0
 
-    def fit(self, train):
+    def fit(self, data, items=None):
         '''
         Trains the predictor.
 
@@ -75,6 +92,18 @@ class SessionKNN:
             It must have a header. Column names are arbitrary, but must correspond to the ones you set during the initialization of the network (session_key, item_key, time_key properties).
 
         '''
+
+        if self.last_n_days != None:
+
+            max_time = dt.fromtimestamp(data[self.time_key].max())
+            date_threshold = max_time.date() - td(self.last_n_days)
+            stamp = dt.combine(date_threshold, dt.min.time()).timestamp()
+            train = data[data[self.time_key] >= stamp]
+
+        else:
+            train = data
+
+        self.num_items = train[self.item_key].max()
 
         index_session = train.columns.get_loc(self.session_key)
         index_item = train.columns.get_loc(self.item_key)
@@ -92,6 +121,8 @@ class SessionKNN:
                     self.session_item_map.update({session: session_items})
                     # cache the last time stamp of the session
                     self.session_time.update({session: time})
+                    if time < self.min_time:
+                        self.min_time = time
                 session = row[index_session]
                 session_items = set()
             time = row[index_time]
@@ -112,7 +143,7 @@ class SessionKNN:
         """
         docstring
         """
-        return 'gru4rec'
+        return 'v-sknn'
 
     def predict_next(self, session_id, input_item_id, predict_for_item_ids=None, skip=False, type='view', timestamp=0):
         '''
@@ -153,54 +184,26 @@ class SessionKNN:
                 ts = time.time()
                 self.session_time.update({self.session: ts})
 
+            self.last_ts = -1
             self.session = session_id
             self.session_items = list()
+            self.dwelling_times = list()
             self.relevant_sessions = set()
 
         if type == 'view':
             self.session_items.append(input_item_id)
+            if self.dwelling_time:
+                if self.last_ts > 0:
+                    self.dwelling_times.append(timestamp - self.last_ts)
+                self.last_ts = timestamp
 
         if skip:
             return
 
+        items = self.session_items if self.last_n_clicks is None else self.session_items[-self.last_n_clicks:]
         neighbors = self.find_neighbors(
-            set(self.session_items), input_item_id, session_id)
-        scores = self.score_items(neighbors)
-
-        # add some reminders
-        if self.remind:
-
-            reminderScore = 5
-            takeLastN = 3
-
-            cnt = 0
-            for elem in self.session_items[-takeLastN:]:
-                cnt = cnt + 1
-                # reminderScore = reminderScore + (cnt/100)
-
-                oldScore = scores.get(elem)
-                newScore = 0
-                if oldScore is None:
-                    newScore = reminderScore
-                else:
-                    newScore = oldScore + reminderScore
-                # print 'old score ', oldScore
-                # update the score and add a small number for the position
-                newScore = (newScore * reminderScore) + (cnt / 100)
-
-                scores.update({elem: newScore})
-
-        # push popular ones
-        if self.pop_boost > 0:
-
-            pop = self.item_pop(neighbors)
-            # Iterate over the item neighbors
-            # print itemScores
-            for key in scores:
-                item_pop = pop.get(key)
-                # Gives some minimal MRR boost?
-                scores.update(
-                    {key: (scores[key] + (self.pop_boost * item_pop))})
+            items, input_item_id, session_id, self.dwelling_times, timestamp)
+        scores = self.score_items(neighbors, items, timestamp)
 
         # Create things in the format ..
         if predict_for_item_ids is None:
@@ -263,12 +266,12 @@ class SessionKNN:
         --------
         out : float value           
         '''
-        sc = time.time()
+        sc = time.clock()
         intersection = len(first & second)
         union = len(first | second)
         res = intersection / union
 
-        self.sim_time += (time.time() - sc)
+        self.sim_time += (time.clock() - sc)
 
         return res
 
@@ -333,7 +336,7 @@ class SessionKNN:
 
         return result
 
-    def random(self, first, second):
+    def vec(self, first, second, map):
         '''
         Calculates the ? for 2 sessions
 
@@ -346,7 +349,14 @@ class SessionKNN:
         --------
         out : float value           
         '''
-        return random.random()
+        a = first & second
+        sum = 0
+        for i in a:
+            sum += map[i]
+
+        result = sum / len(map)
+
+        return result
 
     def items_for_session(self, session):
         '''
@@ -362,6 +372,20 @@ class SessionKNN:
         '''
         return self.session_item_map.get(session)
 
+    def vec_for_session(self, session):
+        '''
+        Returns all items in the session
+
+        Parameters
+        --------
+        session: Id of a session
+
+        Returns 
+        --------
+        out : set           
+        '''
+        return self.session_vec_map.get(session)
+
     def sessions_for_item(self, item_id):
         '''
         Returns all session for an item
@@ -374,7 +398,7 @@ class SessionKNN:
         --------
         out : set           
         '''
-        return self.item_session_map.get(item_id)
+        return self.item_session_map.get(item_id) if item_id in self.item_session_map else set()
 
     def most_recent_sessions(self, sessions, number):
         '''
@@ -434,9 +458,6 @@ class SessionKNN:
 
         else:  # sample some sessions
 
-            self.relevant_sessions = self.relevant_sessions | self.sessions_for_item(
-                input_item_id)
-
             if len(self.relevant_sessions) > self.sample_size:
 
                 if self.sampling == 'recent':
@@ -452,7 +473,7 @@ class SessionKNN:
             else:
                 return self.relevant_sessions
 
-    def calc_similarity(self, session_items, sessions):
+    def calc_similarity(self, session_items, sessions, dwelling_times, timestamp):
         '''
         Calculates the configured similarity for the items in session_items and each session in sessions.
 
@@ -466,17 +487,50 @@ class SessionKNN:
         out : list of tuple (session_id,similarity)           
         '''
 
+        pos_map = {}
+        length = len(session_items)
+
+        count = 1
+        for item in session_items:
+            if self.weighting is not None:
+                pos_map[item] = getattr(self, self.weighting)(count, length)
+                count += 1
+            else:
+                pos_map[item] = 1
+
+        dt = dwelling_times.copy()
+        dt.append(0)
+        dt = pd.Series(dt, index=session_items)
+        dt = dt / dt.max()
+        # dt[session_items[-1]] = dt.mean() if len(session_items) > 1 else 1
+        dt[session_items[-1]] = 1
+
+        if self.dwelling_time:
+            # print(dt)
+            for i in range(len(dt)):
+                pos_map[session_items[i]] *= dt.iloc[i]
+            # print(pos_map)
         # print 'nb of sessions to test ', len(sessionsToTest), ' metric: ', self.metric
+        items = set(session_items)
         neighbors = []
         cnt = 0
         for session in sessions:
             cnt = cnt + 1
             # get items of the session, look up the cache first
-            session_items_test = self.items_for_session(session)
+            n_items = self.items_for_session(session)
+            sts = self.session_time[session]
 
-            similarity = getattr(self, self.similarity)(
-                session_items_test, session_items)
+            similarity = self.vec(items, n_items, pos_map)
             if similarity > 0:
+
+                if self.weighting_time:
+                    diff = timestamp - sts
+                    days = round(diff / 60 / 60 / 24)
+                    decay = pow(7 / 8, days)
+                    similarity *= decay
+
+                # print("days:",days," => ",decay)
+
                 neighbors.append((session, similarity))
 
         return neighbors
@@ -484,7 +538,7 @@ class SessionKNN:
     # -----------------
     # Find a set of neighbors, returns a list of tuples (sessionid: similarity)
     # -----------------
-    def find_neighbors(self, session_items, input_item_id, session_id):
+    def find_neighbors(self, session_items, input_item_id, session_id, dwelling_times, timestamp):
         '''
         Finds the k nearest neighbors for the given session_id and the current item input_item_id. 
 
@@ -501,7 +555,7 @@ class SessionKNN:
         possible_neighbors = self.possible_neighbor_sessions(
             session_items, input_item_id, session_id)
         possible_neighbors = self.calc_similarity(
-            session_items, possible_neighbors)
+            session_items, possible_neighbors, dwelling_times, timestamp)
 
         possible_neighbors = sorted(
             possible_neighbors, reverse=True, key=lambda x: x[1])
@@ -509,7 +563,7 @@ class SessionKNN:
 
         return possible_neighbors
 
-    def score_items(self, neighbors):
+    def score_items(self, neighbors, current_session, timestamp):
         '''
         Compute a set of scores for all items given a set of neighbors.
 
@@ -527,15 +581,52 @@ class SessionKNN:
         for session in neighbors:
             # get the items in this session
             items = self.items_for_session(session[0])
+            step = 1
+
+            for item in reversed(current_session):
+                if item in items:
+                    decay = getattr(self, self.weighting_score)(step)
+                    break
+                step += 1
 
             for item in items:
                 old_score = scores.get(item)
-                new_score = session[1]
+                similarity = session[1]
 
                 if old_score is None:
-                    scores.update({item: new_score})
+                    scores.update({item: (similarity * decay)})
                 else:
-                    new_score = old_score + new_score
+                    new_score = old_score + (similarity * decay)
                     scores.update({item: new_score})
 
         return scores
+
+    def linear_score(self, i):
+        return 1 - (0.1 * i) if i <= 100 else 0
+
+    def same_score(self, i):
+        return 1
+
+    def div_score(self, i):
+        return 1 / i
+
+    def log_score(self, i):
+        return 1 / (log10(i + 1.7))
+
+    def quadratic_score(self, i):
+        return 1 / (i * i)
+
+    def linear(self, i, length):
+        return 1 - (0.1 * (length - i)) if i <= 10 else 0
+
+    def same(self, i, length):
+        return 1
+
+    def div(self, i, length):
+        return i / length
+
+    def log(self, i, length):
+        return 1 / (log10((length - i) + 1.7))
+
+    def quadratic(self, i, length):
+        return (i / length) ** 2

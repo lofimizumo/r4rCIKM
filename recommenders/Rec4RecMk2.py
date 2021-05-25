@@ -1,5 +1,8 @@
+import random
+from util.make_data import label
 from recommenders.ISeqRecommender import ISeqRecommender
 import torch
+import pandas as pd
 import torch.nn as nn
 import logging
 import numpy as np
@@ -25,8 +28,13 @@ class R4RRecommender(ISeqRecommender):
                             pretrained_embeddings=pretrained_embeddings)
         self.ensemble = rec_ensemble
         self.rec_count = len(rec_ensemble)
+        self.model.rec_count = len(rec_ensemble)
+        self.items_seen = []
         self.device = torch.device(
             'cuda:0' if torch.cuda.is_available() else 'cpu')
+
+        self.aggregate = torch.nn.Linear
+        self.rec_fitnesses = []
 
     def generateBaseEmbeddings(self, sequences, scores, support_size=None):
         """
@@ -47,38 +55,44 @@ class R4RRecommender(ISeqRecommender):
             ret[i] = rec_k_topK
         return ret
 
-    def fit(self, sequences, metrics):
+    def fit(self, sequences, metrics, input_space='fnr', users=None):
         """
         fit
         """
         rec_eval_scores = evaluation.predict_score_of_sequences(self.ensemble,
                                                                 test_sequences=sequences,
                                                                 given_k=1,
+                                                                users=users,
                                                                 look_ahead=1,
                                                                 evaluation_functions=metrics.values(),
                                                                 top_n=10,
                                                                 scroll=False
                                                                 )
-        # build support set for each base recommender here
-        support = self.generateBaseEmbeddings(sequences, rec_eval_scores, 10)
-        self.model.encode_rec(support,range(self.rec_count))
 
+        self.input_space = input_space
+        self.items_seen = [x for i in sequences for x in i]
+        self.items_seen = list(set(self.items_seen))
+
+        self.model.support = self.generateBaseEmbeddings(
+            sequences, rec_eval_scores, 10)
+        self.ensemble_model = Feedforward(self.rec_count+self.rec_count, 1)
         np_sub_scores = np.array(rec_eval_scores)
         sub_scores = np_sub_scores.sum(0)/np_sub_scores.shape[0]
         print(sub_scores)
         seq, labels_and_negs = self.label(sequences, rec_eval_scores, 5)
         lst = list(seq)
         lst = [list(map(int, i)) for i in lst]
-        sequences = np.asarray(lst)
+        seq_for_fitness_computing = np.asarray(lst)
 
-        sequences_np = sequences
-        targets_np = labels_and_negs
+        pos_neg_recs = labels_and_negs
         num_items = self.num_items
-        n_train = len(sequences_np)
+        n_train = len(seq_for_fitness_computing)
         self.logger.info("Total training records:{}".format(n_train))
 
         optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.config.learning_rate, weight_decay=self.config.l2)
+            self.model.parameters(), lr=.1e-1, weight_decay=self.config.l2)
+        optimizer_ensemble = torch.optim.Adam(
+            self.ensemble_model.parameters(), lr=.1, weight_decay=self.config.l2)
 
         record_indexes = np.arange(n_train)
         batch_size = self.config.batch_size
@@ -98,24 +112,71 @@ class R4RRecommender(ISeqRecommender):
 
                 batch_record_index = record_indexes[start:end]
 
-                batch_sequences = sequences_np[batch_record_index]
-                batch_targets = targets_np[batch_record_index]
+                batch_sequences = seq_for_fitness_computing[batch_record_index]
+                batch_pos_neg_recs = pos_neg_recs[batch_record_index]
 
-                prediction_score = self.model(
-                    batch_sequences, batch_targets)
+                if input_space == 'f':
+                    fitness_score = self.model(
+                        batch_sequences, batch_pos_neg_recs)
 
-                (targets_prediction, negatives_prediction) = torch.split(
-                    prediction_score, [1, 1], dim=1)
+                    (targets_prediction, negatives_prediction) = torch.split(
+                        fitness_score, [1, 1], dim=1)
 
-                loss = -torch.log(torch.sigmoid(targets_prediction -
-                                                negatives_prediction) + 1e-8)
-                loss = torch.mean(torch.sum(loss))
+                    loss = -torch.log(torch.sigmoid(targets_prediction -
+                                                    negatives_prediction) + 1e-8)
+                    loss = torch.mean(torch.sum(loss))
 
-                epoch_loss += loss.item()
+                    epoch_loss += loss.item()
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                else:
+                    fitness_score = self.model(
+                        batch_sequences)
+                    loss = 0
+                    for i, seq in enumerate(batch_sequences):
+                        seq = [str(x) for x in seq]
+                        preds_pos = []
+                        preds_neg = []
+                        pos_item = seq[-1:]
+                        neg_item = []
+                        while neg_item == []:
+                            sample = random.choice(random.choice(sequences))
+                            if sample not in seq:
+                                neg_item.append(sample)
+
+                        for rec_idx in range(self.rec_count):
+                            rec_output = self.ensemble[rec_idx].recommend(
+                                seq[:-1], ground_truth=pos_item)
+                            pred_pos = list(
+                                filter(lambda x: x[0][0] == pos_item[0], rec_output))
+                            pred_neg = list(
+                                filter(lambda x: x[0][0] == neg_item[0], rec_output))
+                            preds_pos.append(pred_pos[0][1])
+                            preds_neg.append(pred_neg[0][1])
+                        preds_pos = torch.FloatTensor(preds_pos)
+                        preds_neg = torch.FloatTensor(preds_neg)
+                        ensemble_input_pos = torch.cat(
+                            (fitness_score[0], preds_pos), 0)
+                        ensemble_input_neg = torch.cat(
+                            (fitness_score[0], preds_neg), 0)
+                        pos = self.ensemble_model(ensemble_input_pos)
+                        neg = self.ensemble_model(ensemble_input_neg)
+
+                        loss += -torch.log(torch.relu(pos -
+                                                      neg) + 1e-8)
+                        # loss = torch.mean(torch.sum(loss))
+
+                    epoch_loss += loss.item()
+
+                    optimizer_ensemble.zero_grad()
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer_ensemble.step()
+                    optimizer.step()
+
             epoch_loss /= num_batches
 
             t2 = time()
@@ -123,6 +184,7 @@ class R4RRecommender(ISeqRecommender):
             output_str = "Epoch %d [%.1f s]  loss=%.4f" % (
                 epoch_num + 1, t2 - t1, epoch_loss)
             self.logger.info(output_str)
+        self.model.rec_emb.weight.requires_grad = False
 
     def label(self, train_data, rec_eval_scores, sequence_length):
         """
@@ -157,19 +219,53 @@ class R4RRecommender(ISeqRecommender):
 
     def recommend(self, item_seq, user_id=None, ground_truth=None):
 
+        label = ground_truth
         sequence = [int(x) for x in item_seq]
         sequence = torch.LongTensor(sequence).to(self.device)
-        emb = self.model.item_emb(sequence)
-        emb = emb.sum(0)
+
+        # attention
+        emb = self.model.encode_seq(sequence)
+        # emb = self.model.item_emb(sequence)
+        # emb = emb.mean(0)
 
         rec_to_predict = np.arange(self.rec_count)
         rec_to_predict = torch.LongTensor(rec_to_predict).to(self.device)
         rec_embs = self.model.rec_emb(rec_to_predict)
         b = self.model.rec_b(rec_to_predict)
         fit_scores = torch.matmul(emb, rec_embs.T)
-        most_fit_rec = int(fit_scores.argmax())
-        ensemble_output = self.ensemble[most_fit_rec].recommend(item_seq)
-        return ensemble_output
+        
+        #to record fitnesses in experiment only
+        self.rec_fitnesses.append(fit_scores) 
+        # 'f'--using fitness score only for prediction
+        if self.input_space == 'f':
+            most_fit_rec = int(fit_scores.argmax())
+            ret = self.ensemble[most_fit_rec].recommend(
+                item_seq, None, ground_truth=label)
+        else:
+            items_to_predict = random.choices(self.items_seen, k=300)
+            items_to_predict.append(ground_truth[0][0])
+            input_list = []
+            rec_predictions = []
+            for rec_idx in range(self.rec_count):
+                rec_output = self.ensemble[rec_idx].recommend(
+                    item_seq, None, ground_truth=ground_truth)
+                rec_dict = {i[0][0]: i[1] for i in rec_output}
+                rec_predictions.append(rec_dict)
+            for target_item in items_to_predict:
+                target_scores = []
+                for rec_idx in range(self.rec_count):
+                    target_score = rec_predictions[rec_idx][target_item]
+                    target_scores.append(target_score)
+                target_scores = torch.FloatTensor(target_scores)
+                ensemble_input = torch.cat(
+                    (fit_scores, target_scores), 0)
+                input_list.append(ensemble_input)
+            ensemble_input = torch.stack(input_list)
+            items_scores = self.ensemble_model(ensemble_input)
+            ret = list(zip(items_to_predict, items_scores))
+            ret.sort(key=lambda x: x[1], reverse=True)
+            ret = [([x[0]], float(x[1]))for x in ret]
+        return ret
 
 
 class MF(nn.Module):
@@ -177,15 +273,16 @@ class MF(nn.Module):
         super(MF, self).__init__()
 
         self.args = model_args
-        self.tf = torch.nn.TransformerEncoderLayer(d_model=100, nhead=4)
         self.device = torch.device(
             'cuda:0' if torch.cuda.is_available() else 'cpu')
         dims = self.args.d
 
+        self.rec_count = 0
         self.rec_emb = nn.Embedding(
             100, dims, padding_idx=0).to(self.device)
         self.rec_emb.weight.data.normal_(
             0, 1.0 / self.rec_emb.embedding_dim)
+        self.rec_emb_sp = []
         # Todo: use embedding learnt from support set instead random initialized value here
 
         self.rec_b = nn.Embedding(
@@ -279,7 +376,6 @@ class MF(nn.Module):
         docstring
         """
         seq_embeddings = []
-
         for rec in rec_to_estimate:
             seqs = support[rec]
             for seq in seqs:
@@ -288,26 +384,50 @@ class MF(nn.Module):
             rec_emb = torch.stack(seq_embeddings).mean(dim=0)
             self.rec_emb.weight.data[rec] = torch.nn.Parameter(torch.FloatTensor(
                 rec_emb))
+        self.rec_emb.requires_grad_(True)
 
-    def forward(self, item_seq, rec_to_estimate):
-        item_seq = item_seq
+    def forward(self, item_seq, rec_to_estimate=None):
         sequence_embs = []
         for i in item_seq:
             i = torch.LongTensor(i).to(self.device)
-            embs = self.item_emb(i)
-            embs = embs.sum(0)
+            embs = self.encode_seq(i)
             sequence_embs.append(embs)
 
         sequence_embs = torch.stack(sequence_embs)
-        sequence_embs = sequence_embs.unsqueeze(dim=0)
-        sequence_embs = self.tf(sequence_embs).squeeze(dim=0)
+        # sequence_embs = sequence_embs.unsqueeze(dim=0)
+        # sequence_embs = self.tf(sequence_embs).squeeze(dim=0)
         self.seq_embs = sequence_embs
 
-        rec_to_estimate = torch.LongTensor(rec_to_estimate).to(self.device)
+        # self.encode_rec(self.support,range(self.rec_count))
+        if rec_to_estimate is None:
+            rec_to_estimate = torch.LongTensor(np.arange(self.rec_count))
+            rec_to_estimate = rec_to_estimate.expand(len(item_seq), -1)
+        else:
+            rec_to_estimate = torch.LongTensor(rec_to_estimate).to(self.device)
+
         rec_embs = self.rec_emb(rec_to_estimate)
         b = self.rec_b(rec_to_estimate)
-        res = torch.baddbmm(b, rec_embs, sequence_embs.unsqueeze(2)).squeeze()
-        return res
+        fitnesses = torch.baddbmm(
+            b, rec_embs, sequence_embs.unsqueeze(2)).squeeze()
+        return fitnesses
+
+
+class Feedforward(torch.nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(Feedforward, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.fc1 = torch.nn.Linear(self.input_size, self.hidden_size)
+        self.relu = torch.nn.ReLU()
+        self.fc2 = torch.nn.Linear(self.hidden_size, 1)
+        self.sigmoid = torch.nn.Sigmoid()
+
+    def forward(self, x):
+        hidden = self.fc1(x)
+        relu = self.relu(hidden)
+        output = self.fc2(relu)
+        output = self.sigmoid(output)
+        return output
 
 
 class PointWiseFeedForward(torch.nn.Module):

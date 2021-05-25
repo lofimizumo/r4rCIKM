@@ -5,7 +5,7 @@ import argparse
 import time
 from tqdm import tqdm
 import torch
-
+from util.attention.utils import *
 
 def str2bool(s):
     if s not in {'false', 'true'}:
@@ -18,17 +18,18 @@ class AttentionRecommender(ISeqRecommender):
         super().__init__()
         self.model = None
         self.itemnum = None
+        self.train_data = None
 
-    def fit(self, train_data):
+    def fit(self,tr):
         parser = argparse.ArgumentParser()
         parser.add_argument('--dataset', default=None)
         parser.add_argument('--train_dir', default=None)
-        parser.add_argument('--batch_size', default=256, type=int)
+        parser.add_argument('--batch_size', default=512, type=int)
         parser.add_argument('--lr', default=.5e-2, type=float)
         parser.add_argument('--maxlen', default=200, type=int)
         parser.add_argument('--hidden_units', default=50, type=int)
         parser.add_argument('--num_blocks', default=2, type=int)
-        parser.add_argument('--num_epochs', default=5, type=int)
+        parser.add_argument('--num_epochs', default=10, type=int)
         parser.add_argument('--num_heads', default=1, type=int)
         parser.add_argument('--dropout_rate', default=0.5, type=float)
         parser.add_argument('--l2_emb', default=0.0, type=float)
@@ -36,7 +37,9 @@ class AttentionRecommender(ISeqRecommender):
         parser.add_argument('--inference_only', default=False, type=str2bool)
         parser.add_argument('--state_dict_path', default=None, type=str)
         args = parser.parse_args()
-        [user_train, user_valid, user_test, usernum, self.itemnum] = train_data
+        data_sasrecformat = pandas_data_to_SASRec(tr, 'sequence', 'user_id')
+        data_sasrecformat = data_partition(data_sasrecformat)
+        [user_train, user_valid, user_test, usernum, self.itemnum] = data_sasrecformat
         self.unique_items(user_train)
         # tail? + ((len(user_train) % args.batch_size) != 0)
         num_batch = len(user_train) // args.batch_size
@@ -116,7 +119,6 @@ class AttentionRecommender(ISeqRecommender):
                 pbar.update(1)
         sampler.close()
         print("Done")
-        return super().fit(train_data)
 
     def unique_items(self, user_train):
         unique_items = []
@@ -125,15 +127,15 @@ class AttentionRecommender(ISeqRecommender):
         unique_items = list(set(unique_items))
         self.unique_items = unique_items
 
-    def recommend(self, sequence, user_id=None, target=None):
+    def recommend(self, sequence, user_id=None, ground_truth=None):
         # convert input to sasrec format
         sequence = np.reshape([int(x) for x in sequence], (1, -1))
-        if target is not None:
-            target = [int(target[0][0])]
+        if ground_truth is not None:
+            ground_truth = [int(ground_truth[0][0])]
             neg = random.choices(np.arange(self.itemnum),
-                                 k=400)
+                                 k=350)
             # neg = list(set(self.unique_items)-set(target))
-            items_to_predict = np.asarray(target+neg)
+            items_to_predict = np.asarray(ground_truth+neg)
         else:
             items_to_predict = np.asarray(self.unique_items)
         ret = self.model.predict(sequence, items_to_predict).squeeze(0)

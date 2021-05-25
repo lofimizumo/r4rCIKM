@@ -2,14 +2,15 @@ from _operator import itemgetter
 from math import sqrt
 import random
 import time
+from math import log10
 
 import numpy as np
 import pandas as pd
 
 
-class SessionKNN:
+class SeqSessionKNN:
     '''
-    SessionKNN( k, sample_size=500, sampling='recent',  similarity = 'jaccard', remind=False, pop_boost=0, session_key = 'SessionId', item_key= 'ItemId')
+    SeqSessionKNN( k, sample_size=500, sampling='recent',  similarity = 'jaccard', remind=False, pop_boost=0, session_key = 'SessionId', item_key= 'ItemId')
 
     Parameters
     -----------
@@ -37,13 +38,15 @@ class SessionKNN:
         Header of the timestamp column in the input file. (default: 'Time')
     '''
 
-    def __init__(self, k, sample_size=1000, sampling='recent', similarity='jaccard', remind=False, pop_boost=0,
-                 extend=False, normalize=True, session_key='SessionId', item_key='ItemId', time_key='Time'):
+    def __init__(self, k, sample_size=1000, sampling='recent', similarity='jaccard', weighting='div', remind=False,
+                 pop_boost=0, extend=False, normalize=True, session_key='SessionId', item_key='ItemId',
+                 time_key='Time'):
 
         self.remind = remind
         self.k = k
         self.sample_size = sample_size
         self.sampling = sampling
+        self.weighting = weighting
         self.similarity = similarity
         self.pop_boost = pop_boost
         self.session_key = session_key
@@ -64,7 +67,13 @@ class SessionKNN:
 
         self.sim_time = 0
 
-    def fit(self, train):
+    def __str__(self):
+        """
+        docstring
+        """
+        return 's-sknn'
+
+    def fit(self, train, items=None):
         '''
         Trains the predictor.
 
@@ -107,12 +116,6 @@ class SessionKNN:
         # Add the last tuple
         self.session_item_map.update({session: session_items})
         self.session_time.update({session: time})
-
-    def __str__(self):
-        """
-        docstring
-        """
-        return 'gru4rec'
 
     def predict_next(self, session_id, input_item_id, predict_for_item_ids=None, skip=False, type='view', timestamp=0):
         '''
@@ -165,7 +168,7 @@ class SessionKNN:
 
         neighbors = self.find_neighbors(
             set(self.session_items), input_item_id, session_id)
-        scores = self.score_items(neighbors)
+        scores = self.score_items(neighbors, self.session_items)
 
         # add some reminders
         if self.remind:
@@ -263,12 +266,12 @@ class SessionKNN:
         --------
         out : float value           
         '''
-        sc = time.time()
+        sc = time.clock()
         intersection = len(first & second)
         union = len(first | second)
         res = intersection / union
 
-        self.sim_time += (time.time() - sc)
+        self.sim_time += (time.clock() - sc)
 
         return res
 
@@ -332,21 +335,6 @@ class SessionKNN:
         result = (2 * a) / ((2 * a) + b + c)
 
         return result
-
-    def random(self, first, second):
-        '''
-        Calculates the ? for 2 sessions
-
-        Parameters
-        --------
-        first: Id of a session
-        second: Id of a session
-
-        Returns 
-        --------
-        out : float value           
-        '''
-        return random.random()
 
     def items_for_session(self, session):
         '''
@@ -434,9 +422,6 @@ class SessionKNN:
 
         else:  # sample some sessions
 
-            self.relevant_sessions = self.relevant_sessions | self.sessions_for_item(
-                input_item_id)
-
             if len(self.relevant_sessions) > self.sample_size:
 
                 if self.sampling == 'recent':
@@ -509,7 +494,7 @@ class SessionKNN:
 
         return possible_neighbors
 
-    def score_items(self, neighbors):
+    def score_items(self, neighbors, current_session):
         '''
         Compute a set of scores for all items given a set of neighbors.
 
@@ -527,15 +512,37 @@ class SessionKNN:
         for session in neighbors:
             # get the items in this session
             items = self.items_for_session(session[0])
+            step = 1
+
+            for item in reversed(current_session):
+                if item in items:
+                    decay = getattr(self, self.weighting)(step)
+                    break
+                step += 1
 
             for item in items:
                 old_score = scores.get(item)
-                new_score = session[1]
+                similarity = session[1]
 
                 if old_score is None:
-                    scores.update({item: new_score})
+                    scores.update({item: (similarity * decay)})
                 else:
-                    new_score = old_score + new_score
+                    new_score = old_score + (similarity * decay)
                     scores.update({item: new_score})
 
         return scores
+
+    def linear(self, i):
+        return 1 - (0.1 * i) if i <= 100 else 0
+
+    def same(self, i):
+        return 1
+
+    def div(self, i):
+        return 1 / i
+
+    def log(self, i):
+        return 1 / (log10(i + 1.7))
+
+    def quadratic(self, i):
+        return 1 / (i * i)

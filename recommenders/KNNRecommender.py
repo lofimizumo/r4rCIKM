@@ -1,6 +1,10 @@
 from recommenders.ISeqRecommender import ISeqRecommender
 from util.data_utils import dataset_to_gru4rec_format
+from util.knn.iknn import ItemKNN
 from util.knn.sknn import SessionKNN
+from util.knn.vmsknn import VMSessionKNN
+from util.knn.ssknn import SeqSessionKNN
+from util.knn.sfsknn import SeqFilterSessionKNN
 import sys
 
 
@@ -11,7 +15,11 @@ class KNNRecommender(ISeqRecommender):
     Evaluation of Session-based Recommendation Algorithms, Malte Ludewig and Dietmar Jannach
     """
     knn_models = {
+        'iknn': ItemKNN,
         'sknn': SessionKNN,
+        'v-sknn': VMSessionKNN,
+        's-sknn': SeqSessionKNN,
+        'sf-sknn': SeqFilterSessionKNN
     }
 
     def __init__(self,

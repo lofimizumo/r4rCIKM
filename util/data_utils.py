@@ -5,7 +5,7 @@ import time
 from collections import Counter
 import gzip
 import json
-
+from spotlight.interactions import Interactions
 import numpy as np
 import pandas as pd
 
@@ -40,6 +40,14 @@ def create_seq_db_filter_top_k(path, topk=0, last_months=1):
     result.reset_index(inplace=True)
     return result
 
+def filter_testset(tr,te):
+    """
+    make sure items in te appeared in tr
+    """
+    items = tr['sequence'].explode().map(int).agg(set)
+    te = te.explode('sequence')
+    te = te.loc[te['sequence'].map(int).isin(items)]
+    return te.groupby('user_id').agg(list)
 
 def dataset_to_gru4rec_format(dataset):
     """
