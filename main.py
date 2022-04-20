@@ -1,15 +1,4 @@
-from recommenders.AttentionRecommender import AttentionRecommender
-from spotlight.datasets.movielens import get_movielens_dataset
-from spotlight.datasets.amazon import get_amazon_dataset
-from spotlight.cross_validation import random_train_test_split
-
-import numpy as np
-from recommenders.Rec4RecRecommender import Rec4RecRecommender
-from recommenders.Rec4RecMk2 import R4RRecommender
-from recommenders.KNNRecommender import KNNRecommender
-from recommenders.RNNRecommender import RNNRecommender
-from recommenders.FPMCRecommender import FPMCRecommender
-from recommenders.PopularityRecommender import PopularityRecommender
+from recommenders.Rec4Rec_proto_net import R4RProtoRecommender 
 import torch
 from util.attention.utils import *
 from util import evaluation
@@ -101,7 +90,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_heads', type=int, default=1)
     parser.add_argument('--sets_of_neg_samples', type=int, default=50)
     config = parser.parse_args()
-    METRICS = {'recall': recall}
+    METRICS = {'recall': recall, 'mrr': mrr}
 
     tr, te, valid_sequences = make_tr_te('lastfm')
     # rec_sasrec = AttentionRecommender()
@@ -118,9 +107,10 @@ if __name__ == "__main__":
     for rec in rec_ensemble:
         rec.fit(tr)
 
-    ensemble = R4RRecommender(
+    ensemble = R4RProtoRecommender(
         item_count, 100, rec_ensemble, config, pretrained_embeddings=None)
     # ensemble.fit(valid_sequences, METRICS, input_space='f')
+    valid_sequences = valid_sequences[:int(len(valid_sequences)/10)]
     ensemble.fit(valid_sequences, METRICS, input_space='f', users=None)
 
     ensemble_eval_score = evaluation.sequential_evaluation(

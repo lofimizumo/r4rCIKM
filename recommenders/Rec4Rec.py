@@ -22,9 +22,9 @@ class R4RRecommender(ISeqRecommender):
         self.config = model_args
         self.logger = logging.getLogger(__name__)
         if pretrained_embeddings is None:
-            self.model = MF(20000, model_args)
+            self.model = TransformerModel(20000, model_args)
         else:
-            self.model = MF(20000, model_args,
+            self.model = TransformerModel(20000, model_args,
                             pretrained_embeddings=pretrained_embeddings)
         self.ensemble = rec_ensemble
         self.rec_count = len(rec_ensemble)
@@ -36,7 +36,7 @@ class R4RRecommender(ISeqRecommender):
         self.aggregate = torch.nn.Linear
         self.rec_fitnesses = []
 
-    def generateBaseEmbeddings(self, sequences, scores, support_size=None):
+    def generate_support_set(self, sequences, scores, support_size=None):
         """
             input:
             ----------------
@@ -45,7 +45,7 @@ class R4RRecommender(ISeqRecommender):
             rec1:[0,0,0,1]
             ----------------
             return: {'rec_k': top_performed_sequences}
-            """
+        """
         ind_best_performed = np.flip(np.argsort(
             scores, axis=0), axis=0).transpose()
         ind_best_performed = ind_best_performed[:, :support_size].tolist()
@@ -58,8 +58,11 @@ class R4RRecommender(ISeqRecommender):
     def fit(self, sequences, metrics, input_space='fnr', users=None):
         """
         fit
+        1.evaluate each base recommender with validation dataset
+        2.generate positive and negative data samples based upon the result in previous step
+        3.feed the data to the transformer model
         """
-        rec_eval_scores = evaluation.predict_score_of_sequences(self.ensemble,
+        rec_eval_scores = evaluation.eval_rec_perf(self.ensemble,
                                                                 test_sequences=sequences,
                                                                 given_k=1,
                                                                 users=users,
@@ -73,7 +76,7 @@ class R4RRecommender(ISeqRecommender):
         self.items_seen = [x for i in sequences for x in i]
         self.items_seen = list(set(self.items_seen))
 
-        self.model.support = self.generateBaseEmbeddings(
+        self.model.support = self.generate_support_set(
             sequences, rec_eval_scores, 10)
         self.ensemble_model = Feedforward(self.rec_count+self.rec_count, 1)
         np_sub_scores = np.array(rec_eval_scores)
@@ -268,9 +271,9 @@ class R4RRecommender(ISeqRecommender):
         return ret
 
 
-class MF(nn.Module):
+class TransformerModel(nn.Module):
     def __init__(self, num_items, model_args, pretrained_embeddings=None):
-        super(MF, self).__init__()
+        super(TransformerModel, self).__init__()
 
         self.args = model_args
         self.device = torch.device(

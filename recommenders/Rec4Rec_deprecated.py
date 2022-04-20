@@ -30,7 +30,7 @@ class Rec4RecRecommender(ISeqRecommender):
 
     def fit(self, sequences, metrics):
         # generate labels
-        rec_eval_scores = evaluation.predict_score_of_sequences(self.ensemble,
+        rec_eval_scores = evaluation.eval_rec_perf(self.ensemble,
                                                                 test_sequences=sequences,
                                                                 given_k=1,
                                                                 look_ahead=1,

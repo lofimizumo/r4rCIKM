@@ -59,15 +59,15 @@ def sequential_evaluation(recommender,
     return metrics / len(test_sequences)
 
 
-def predict_score_of_sequences(recommenders,
-                               test_sequences,
-                               evaluation_functions,
-                               users=None,
-                               given_k=1,
-                               look_ahead=1,
-                               top_n=10,
-                               scroll=True,
-                               step=1):
+def eval_rec_perf(recommenders,
+                  test_sequences,
+                  evaluation_functions,
+                  users=None,
+                  given_k=1,
+                  look_ahead=1,
+                  top_n=10,
+                  scroll=True,
+                  step=1):
 
     if given_k == 0:
         raise ValueError('given_k must be != 0')

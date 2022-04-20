@@ -5,7 +5,6 @@ import time
 from collections import Counter
 import gzip
 import json
-from spotlight.interactions import Interactions
 import numpy as np
 import pandas as pd
 

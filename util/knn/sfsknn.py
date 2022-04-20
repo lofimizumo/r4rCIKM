@@ -281,12 +281,12 @@ class SeqFilterSessionKNN:
         --------
         out : float value           
         '''
-        sc = time.clock()
+        sc = time.perf_counter()
         intersection = len(first & second)
         union = len(first | second)
         res = intersection / union
 
-        self.sim_time += (time.clock() - sc)
+        self.sim_time += (time.perf_counter() - sc)
 
         return res
 
