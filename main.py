@@ -52,10 +52,14 @@ def make_tr_te(dataset):
     if dataset == 'lastfm':
         tr, te = make_data_toy_data()
         # te, u = get_test_sequences_and_users(te, 1, tr['user_id'].values)
+        # valid_sequences = te.loc[te['sequence'].map(
+        #     len) > abs(1), 'sequence'].values[:500]
+        # te_array = te.loc[te['sequence'].map(
+        #     len) > abs(1), 'sequence'].values[500:600]
         valid_sequences = te.loc[te['sequence'].map(
-            len) > abs(1), 'sequence'].values[:500]
+            len) > abs(1), 'sequence'].values[:]
         te_array = te.loc[te['sequence'].map(
-            len) > abs(1), 'sequence'].values[500:600]
+            len) > abs(1), 'sequence'].values[:]
 
     if dataset == 'amazon':
         amazon = get_amazon_dataset(
