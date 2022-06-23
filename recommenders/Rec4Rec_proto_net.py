@@ -1,8 +1,6 @@
 import random
-from util.make_data import label
 from recommenders.ISeqRecommender import ISeqRecommender
 import torch
-import pandas as pd
 import torch.nn as nn
 import logging
 import numpy as np
@@ -117,7 +115,7 @@ class R4RProtoRecommender(ISeqRecommender):
                     pos_neg_recs[batch_record_index])
 
                 all_rec_score = self.model(batch_sequences)
-                pos_neg_scores = all_rec_score.gather(1, batch_pos_neg_recs_idx)
+                pos_neg_scores = all_rec_score.gather(1, batch_pos_neg_recs_idx.to(torch.int64))
                 targets_prediction, negatives_prediction = pos_neg_scores.split([
                                                                                1, 1], dim=1)
                 loss = -torch.log(torch.sigmoid(targets_prediction -

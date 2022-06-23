@@ -1,5 +1,4 @@
 from recommenders.KNNRecommender import KNNRecommender
-from recommenders.RNNRecommender import RNNRecommender
 import random
 import numpy as np
 
@@ -19,14 +18,6 @@ def random_search(rec, k):
             params = {i[0]: random.choice(i[1]) for i in params_knn.items()}
             rec_sknn = KNNRecommender(**params)
             recs.append(rec_sknn)
-        return recs
-    elif rec == 'gru4rec':
-        recs = []
-        for i in range(k):
-            params = {i[0]: random.choice(i[1])
-                      for i in params_gru4rec.items()}
-            rec_gru4rec = RNNRecommender(**params)
-            recs.append(rec_gru4rec)
         return recs
     elif rec == 'sasrec':
         pass

@@ -104,7 +104,6 @@ if __name__ == "__main__":
     # print(eval_score)
 
     rec_knns = random_search('knn', 30)
-    rec_gru4recs = random_search('gru4rec', 3)
 
     rec_ensemble = rec_knns
 
