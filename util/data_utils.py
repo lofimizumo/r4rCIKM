@@ -33,8 +33,8 @@ def create_seq_db_filter_top_k(path, topk=0, last_months=1):
         file = file[file['item_id'].isin(keeper)]
     groups = file.groupby('session_id')
     aggregated = groups['item_id'].agg(sequence=lambda x: list(map(str, x)))
-    init_ts = groups['ts'].min()
     users = groups['user_id'].min()
+    init_ts = groups['ts'].min()
     result = aggregated.join(init_ts).join(users)
     result.reset_index(inplace=True)
     return result

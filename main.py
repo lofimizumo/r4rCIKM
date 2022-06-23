@@ -1,3 +1,4 @@
+from sqlalchemy import true
 from recommenders.Rec4Rec_proto_net import R4RProtoRecommender 
 import torch
 from util.attention.utils import *
@@ -37,17 +38,16 @@ def drawRecEmbeddings(rec_names, data):
 
 def make_tr_te(dataset):
     """
-    dataset = {'ml','lastfm','amazon'}
+    dataset = {'ml1m','lastfm','amazon'}
     """
-    if dataset == 'ml':
-        ml_100K = get_movielens_dataset()
-        tr, te = random_train_test_split(ml_100K)
-        tr = spotlight_to_pandas(ml_100K)
-        te = spotlight_to_pandas(te)
-        valid_sequences = te.loc[te['sequence'].map(
-            len) > abs(1), 'sequence'].values[:100]
-        te_array = te.loc[te['sequence'].map(
-            len) > abs(1), 'sequence'].values[100:]
+    if dataset == 'ml1m':
+        ml1m = get_movielens_dataset()
+
+        tr = ml1m.iloc[:int(len(ml1m)/1)]
+        te = ml1m.loc[ml1m['sequence'].map(
+            len) > abs(1), 'sequence'].values[int(len(ml1m)/2):]
+        valid_sequences = te[:100]
+        te_array = te[100:]
 
     if dataset == 'lastfm':
         tr, te = make_data_toy_data()
@@ -96,7 +96,8 @@ if __name__ == "__main__":
     config = parser.parse_args()
     METRICS = {'recall': recall, 'mrr': mrr}
 
-    tr, te, valid_sequences = make_tr_te('lastfm')
+    # tr, te, valid_sequences = make_tr_te('lastfm')
+    tr, te, valid_sequences = make_tr_te('ml1m')
     # rec_sasrec = AttentionRecommender()
     # rec_sasrec.fit(tr)
     # eval_score = evaluation.sequential_evaluation(

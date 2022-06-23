@@ -1,11 +1,10 @@
 from util.split import last_session_out_split, random_holdout
 from util.data_utils import *
-import datetime
 import numpy
 import sys
 import os
 from random import randint
-import pathlib
+import pandas as pd
 sys.path.append(os.getcwd())
 
 
@@ -22,6 +21,21 @@ def make_data_toy_data():
     train_data, test_data = last_session_out_split(dataset)
     return train_data, test_data
 
+def get_movielens_dataset(path='datasets/ml1m.csv'):
+    df = pd.read_csv(path, header=0)
+    col_names = ['user_id', 'item_id', 'ratings', 'ts'] + \
+        df.columns.values.tolist()[4:]
+    df.columns = col_names
+    df['session_id']=df['user_id']
+    df=df.drop(['ratings'],axis=1)
+    groups = df.groupby('session_id')
+    aggregated = groups['item_id'].agg(sequence=lambda x: list(map(str, x)))
+    
+    users = groups['user_id'].min()
+    init_ts = groups['ts'].min()
+    result = aggregated.join(init_ts).join(users)
+    result.reset_index(inplace=True)
+    return result
 
 def unique_item_count(sequences, sequence_column_name):
     """
